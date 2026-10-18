@@ -1,0 +1,99 @@
+//@version=6
+strategy("Fractal Model Strategy v6", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.04, slippage=1)
+
+// ==========================================
+// INPUTS & CONFIGURATION
+// ==========================================
+rr_ratio = input.float(2.0, title="Risk-to-Reward Ratio (TP)", options=[1.0, 1.5, 2.0, 2.5, 3.0])
+use_rr_3 = input.bool(false, title="Use RR 1:3 Alternative Target")
+
+// ==========================================
+// FRACTAL & LIQUIDITY DETECTION
+// ==========================================
+// Fractal High / Low detection (5-bar fractal)
+fractal_high = high[2] > high[4] and high[2] > high[3] and high[2] > high[1] and high[2] > high[0]
+fractal_low  = low[2] < low[4] and low[2] < low[3] and low[2] < low[1] and low[2] < low[0]
+
+var float last_liq_high = na
+var float last_liq_low = na
+
+if fractal_high
+    last_liq_high := high[2]
+
+if fractal_low
+    last_liq_low := low[2]
+
+// Liquidity sweep condition
+sweep_high = high > last_liq_high and close < last_liq_high
+sweep_low  = low < last_liq_low and close > last_liq_low
+
+// ==========================================
+// CHANGE IN CHARACTER (CISD / CHOCH)
+// ==========================================
+var bool bullish_cisd = false
+var bool bearish_cisd = false
+
+// Simple CISD / BOS representation based on momentum / close breaking recent structure
+bullish_cisd := close > ta.highest(high, 5)[1]
+bearish_cisd := close < ta.lowest(low, 5)[1]
+
+// ==========================================
+// FAIR VALUE GAP (FVG) DETECTION
+// ==========================================
+fvg_bullish = low > high[2]
+fvg_bearish = high < low[2]
+
+var float fvg_top = na
+var float fvg_bottom = na
+
+if fvg_bullish
+    fvg_top := low
+    fvg_bottom := high[2]
+
+if fvg_bearish
+    fvg_top := low[2]
+    fvg_bottom := high
+
+// ==========================================
+// STRATEGY EXECUTION (ENTRY & EXIT)
+// ==========================================
+// Long Entry: Sweep Low + Bullish CISD + Price in Bullish FVG
+long_condition = sweep_low and bullish_cisd and (low <= fvg_top and high >= fvg_bottom)
+
+// Short Entry: Sweep High + Bearish CISD + Price in Bearish Fvg
+short_condition = sweep_high and bearish_cisd and (high >= fvg_bottom and low <= fvg_top)
+
+// Stop loss and take profit variables
+var float long_sl = na
+var float long_tp = na
+var float short_sl = na
+var float short_tp = na
+
+if long_condition and strategy.position_size == 0
+    long_sl := low[2] // C2 extreme
+    risk = close - long_sl
+    target_rr = use_rr_3 ? 3.0 : rr_ratio
+    long_tp := close + (risk * target_rr)
+    strategy.entry("Fractal Long", strategy.long)
+
+if short_condition and strategy.position_size == 0
+    short_sl := high[2] // C2 extreme
+    risk = short_sl - close
+    target_rr = use_rr_3 ? 3.0 : rr_ratio
+    short_tp := close - (risk * target_rr)
+    strategy.entry("Fractal Short", strategy.short)
+
+// Exit management
+if strategy.position_size > 0
+    strategy.exit("Exit Long", "Fractal Long", stop=long_sl, limit=long_tp)
+
+if strategy.position_size < 0
+    strategy.exit("Exit Short", "Fractal Short", stop=short_sl, limit=short_tp)
+
+// ==========================================
+// PLOTTING / VISUALS
+// ==========================================
+plot(last_liq_high, title="Liquidity High", color=color.red, linewidth=2, style=plot.style_linebr)
+plot(last_liq_low, title="Liquidity Low", color=color.green, linewidth=2, style=plot.style_linebr)
+plotshape(long_condition, title="Long Signal", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(short_condition, title="Short Signal", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
